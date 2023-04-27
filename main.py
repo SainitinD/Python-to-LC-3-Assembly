@@ -1,0 +1,87 @@
+import re
+
+STACK_BUILDUP_INIT = "ADD R6, R6, -4\nSTR R5, R6, 1\nSTR R7, R6, 2\nADD R5, R6, 0\nADD R6, R6, -5\n"
+STACK_BUILDUP_STORE_REG = "STR R0, R6, 0\nSTR R1, R6, 1\nSTR R2, R6, 2\nSTR R3, R6, 3\nSTR R4, R6, 4\n"
+
+STACK_TEARDOWN_LOAD_REG = "LDR R0, R6, 0\nLDR R1, R6, 1\nLDR R2, R6, 2\nLDR R3, R6, 3\nLDR R4, R6, 4\nADD R6, R5, 0\n"
+STACK_TEARDOWN_FINAL = "LDR R5, R6, 1\nLDR R7, R6, 2\nADD R6, R6, 3\nRET\n"
+
+STACK_IMPL = ""
+
+stack_pointer = 0x6000
+args_dict = {}
+local_vars_dict = {}
+reg_dict = {}
+
+with open("file.py") as file:
+    lines = file.readlines()
+    for line in lines:
+        # Get no.of arguments
+        if re.search("def [a-z]*\(", line):
+            idx = re.search("def [a-z]*\(", line).end()
+            line = line[idx:]
+            line = line.split(")")[0].split(',')
+            for idx, arg in enumerate(line):
+                args_dict[arg.strip()] = 4+idx
+            #print(args_dict)
+            no_of_args = len(line)
+        # Find and index local variables
+        elif re.search("\s*[a-z]*[^+\-*/]=", line):
+            var, _ = line.split("=")
+            var = var.lstrip()
+            local_vars_dict[var] = len(local_vars_dict.keys())
+
+        #print(local_vars_dict.keys(), no_of_args)
+
+    with open("out.asm", "w") as out:
+        ## STACK BUILDUP
+        out.write(".orig x3000\nMULTIPLY\n")
+        out.write(";;STACK BUILDUP\n")
+        out.write(STACK_BUILDUP_INIT)
+        for var in range(len(local_vars_dict.keys()) - 1):
+            out.write("ADD R6, R6, -1\n")
+        out.write(STACK_BUILDUP_STORE_REG)
+
+        ## Clear all local variable spots
+        out.write("AND R0, R0, 0\n")
+        for var in local_vars_dict.keys():
+            print(var)
+            out.write(f"STR R0, R5, -{local_vars_dict[var]}\n")
+
+        ## SUBROUTINE IMPLEMENTATION
+        inALoop, loop_indent = False, 4
+        for line in lines:
+            # Begin the loop implementation
+            if re.search("while", line):
+                inALoop = True
+                loop_indent = re.search("\s*[a-z]", line).end() + 4
+                var, val = line.split("while ")[1][1:-3].split(">")
+                STACK_IMPL += f"AND R0, R0, 0\nLDR R0, R5, {args_dict[var]}\nWHILE\nADD R0,R0,0\nBRnz END  ;; terminating condition\n"
+
+            # End the loop implementation
+            elif inALoop and re.search("\s*[a-z]", line) and re.search("\s*[a-z]", line).end() != loop_indent:
+                STACK_IMPL += "ADD R0, R0, -1\nBR WHILE\nEND\n"
+                inALoop = False
+            elif inALoop:
+                #print("HERE")
+                # Find and index local variables
+                if re.search("\s*[a-z]*[+]=", line):
+                  #  print("WHOA", line)
+                    var, val = line.split("=")
+                    var = var[:-1].lstrip()
+                    val = val[0]
+                    STACK_IMPL += f"LDR R1, R5, {args_dict[val]}\nLDR R2, R5, -{local_vars_dict[var]}\nADD R2, R2, R1\nSTR R2, R5, -{local_vars_dict[var]}\n"
+
+            if re.search("return", line):
+                var = line.split("n ")[1].strip()
+                if var in local_vars_dict:
+                    STACK_IMPL += f"LDR R0, R5, {local_vars_dict[var]}\nSTR R0, R5, 3\n"
+        out.write(STACK_IMPL)
+        #print(STACK_IMPL)
+
+        ## STACK TEARDOWN
+        out.write(STACK_TEARDOWN_LOAD_REG)
+        out.write(STACK_TEARDOWN_FINAL)
+        out.write(".end")
+
+    # print(lines)
