@@ -39,7 +39,7 @@ with open("file.py") as file:
 
         # Get no.of arguments
         if re.search("def\s*[a-z]*\([a-z]", line):
-            print("HERE")
+           # print("HERE")
             start_idx = re.search("def [a-z]*\(", line).end()
             line = line[start_idx:]
             line = line.split(")")[0].split(',')
@@ -58,6 +58,7 @@ with open("file.py") as file:
     with open("out.asm", "w") as out:
         
         # STACK BUILDUP
+
         out.write(f".orig x3000\n{FUNC_NAME}\n")
         out.write(";;STACK BUILDUP\n")
         out.write(STACK_BUILDUP_INIT)
@@ -69,7 +70,7 @@ with open("file.py") as file:
         # Clear all local variable spots
         out.write("AND R0, R0, 0\n")
         for var in local_vars_dict.keys():
-            print(var)
+           # print(var)
             if local_vars_vals_dict[var]:
                 out.write(f"LD R0, {var.upper()}\n")
                 out.write(f"STR R0, R5, -{local_vars_dict[var]}\n")
@@ -77,44 +78,75 @@ with open("file.py") as file:
             else:
                 out.write(f"STR R0, R5, -{local_vars_dict[var]}\n")
 
-        #LD R0, LABEL
-
-       # LABEL .fill VAL
-
         # SUBROUTINE IMPLEMENTATION
-        inALoop, loop_indent = False, 4
+        in_a_loop, loop_indent = False, 4
         for line in lines:
-            
-            # Begin the loop implementation
-            if re.search("while", line):
-                inALoop = True
-                loop_indent = re.search("\s*[a-z]", line).end() + 4
-                var, val = line.split("while ")[1][1:-3].split(">")
-                STACK_IMPL += f"AND R0, R0, 0\nLDR R0, R5, {args_dict[var]}\nWHILE\nADD R0,R0,0\nBRnz END  ;; terminating condition\n"
 
-            # End the loop implementation
-            elif inALoop and re.search("\s*[a-z]", line) and re.search("\s*[a-z]", line).end() != loop_indent:
-                STACK_IMPL += "ADD R0, R0, -1\nBR WHILE\nEND\n"
-                inALoop = False
+            current_no_of_indents = re.search("\s*", line).end()
+            # Check if there is a while loop
+            if re.search("while", line):
+                in_a_loop = True
+                start_idx = re.search("while\s*\(", line).end()
+                loop_condition = line[start_idx:].split(")")[0]
+                #print(loop_condition)
+                if ">" in loop_condition:
+
+                    var, val = loop_condition.split(">")
+                    out.write("\nAND R0, R0, 0\n")
+                    var = var.strip()
+                    val = val.strip()
+                    if val.isnumeric():
+
+                        # Make R0 equal to the condition value
+                        temp_val = int(val)
+                        while (temp_val > 15):
+                            out.write(f"ADD R0, R0, {15}\n")
+                            temp_val -= 15
+                        out.write(f"ADD R0, R0, {temp_val}  ;; R0 = {val}\n\n")
+
+                        # Start writing while loop initialization
+                        out.write("WHILE\n"\
+                                  "NOT R1, R0\n"\
+                                  f"ADD R1, R1, 1   ;; R1 = -{val}\n"\
+                                  f"LDR R2, R5, {local_vars_dict[var]}   ;; R2 = {var}\n"\
+                                  f"ADD R1, R1, R2  ;; R1 = {var} - {val}\n"\
+                                  "BRnz END\n\n")
+   
+            # Write Core while loop content
+            elif in_a_loop and current_no_of_indents == loop_indent+4:
+                expression = line.strip()
+                if "-=" in expression:
+                    var, val = expression.split("-=")
+                    if val.isnumeric():
+                        out.write(f"LDR R1, R5, {local_vars_dict[var]}  ;; R1 = {var}\n")
+                        out.write(f"AND R2, R2, 0  ;; R2 = 0\n")
+                        temp_val = int(val)
+                        while (temp_val > 15):
+                            out.write(f"ADD R2, R2, {15}\n")
+                            temp_val -= 15
+                        out.write(f"ADD R2, R2, {temp_val}  ;; R2 = {val}\n")
+                        out.write("NOT R2, R2\n")
+                        out.write(f"ADD R2, R2, 1  ;; R2 = -{val}\n")
+                        out.write(f"ADD R1, R1, R2  ;; R1 = {var} - {val}\n")
+                        out.write(f"STR R1, R5, {local_vars_dict[var]}  ;; {var} = R1\n")
             
-            elif inALoop:
-                # Find and index local variables
-                if re.search("\s*[a-z]*[+]=", line):
-                  #  print("WHOA", line)
-                    var, val = line.split("=")
-                    var = var[:-1].lstrip()
-                    val = val[0]
-                    STACK_IMPL += f"LDR R1, R5, {args_dict[val]}\nLDR R2, R5, -{local_vars_dict[var]}\nADD R2, R2, R1\nSTR R2, R5, -{local_vars_dict[var]}\n"
+            elif in_a_loop and current_no_of_indents == loop_indent:
+                in_a_loop = False
+                out.write("BR WHILE\n\n")
+                out.write("END\n")
 
             # Handle returning the function
             if re.search("return", line):
-                var = line.split("n ")[1].strip()
-                if var in local_vars_dict:
-                    STACK_IMPL += f"LDR R0, R5, {local_vars_dict[var]}\nSTR R0, R5, 3\n"
-        
-        # Write the official core functionality LC-3 ASM code
-        out.write(STACK_IMPL)
-        out.write("\n")
+                return_val = line.split("n")[1].strip()
+
+                # Handle when return value is just a variable
+                if return_val.isalpha():
+                    if return_val in local_vars_dict:
+                        out.write(f"LDR R0, R5, {local_vars_dict[return_val]}\n"\
+                                  f"STR R0, R5, 3  ;; rv = {return_val}\n\n")
+            
+            # TODO: Handle more while conditions >, <, >=, <=, ==, !=
+            # TODO: Handle more while terminating conditions (i.e +=, *=, /=)
 
         # Write STACK TEARDOWN
         out.write(";;STACK TEARDOWN\n")
@@ -127,4 +159,36 @@ with open("file.py") as file:
                 out.write(f"{var.upper()} .fill {local_vars_vals_dict[var]}\n")
         out.write(".end")
 
-    # print(lines)
+
+
+#################### OLD CODE ########################
+# Note from future: I can't understand this code :(((
+# # Begin the loop implementation
+# if re.search("while", line):
+#     in_a_loop = True
+#     loop_indent = re.search(""\s*[a-z]"", line).end() + 4
+#     var, val = line.split("while ")[1][1:-3].split(">")
+#     var = var.strip()
+#     val = int(val.strip())
+#     if args_dict.get(var, 0):
+#         STACK_IMPL += f"AND R0, R0, 0\nLDR R0, R5, {args_dict[var]}\nWHILE\nADD R0,R0,0\nBRnz END  ;; terminating condition\n"
+#     else:
+#         STACK_IMPL += f"AND R0, R0, 0\nLDR R0, R5, {local_vars_dict[var]}\nWHILE\nADD R0,R0,0\nBRnz END  ;; terminating condition\n"
+
+
+# # End the loop implementation
+# elif in_a_loop and re.search("\s*[a-z]", line) and re.search("\s*[a-z]", line).end() != loop_indent:
+#     STACK_IMPL += "ADD R0, R0, -1\nBR WHILE\nEND\n"
+#     in_a_loop = False
+
+# elif in_a_loop:
+#     # Find and index local variables
+#     if re.search("\s*[a-z]*[+]=", line):
+#       #  print("WHOA", line)
+#         var, val = line.split("=")
+#         var = var[:-1].strip()
+#         val = val[0]
+#         STACK_IMPL += f"LDR R1, R5, {args_dict[val]}\nLDR R2, R5, -{local_vars_dict[var]}\nADD R2, R2, R1\nSTR R2, R5, -{local_vars_dict[var]}\n"
+
+# Write the official core functionality LC-3 ASM code
+# out.write(STACK_IMPL)
