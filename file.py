@@ -1,6 +1,5 @@
-def mult(a, b):
-    c=0
-    while (b>0):
-        c+=a
-        b-=1
+def random():
+    c = 1000
+    while (c > 900):
+        c-=1
     return c
