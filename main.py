@@ -37,9 +37,9 @@ with open("file.py") as file:
             end_idx = re.search("def [a-x]*", line).end()
             FUNC_NAME = line[idx:end_idx].strip().upper()
 
+       # print(line)
         # Get no.of arguments
         if re.search("def\s*[a-z]*\([a-z]", line):
-           # print("HERE")
             start_idx = re.search("def [a-z]*\(", line).end()
             line = line[start_idx:]
             line = line.split(")")[0].split(',')
@@ -49,11 +49,13 @@ with open("file.py") as file:
                 NO_OF_ARGS = len(line)
         
         # Find and index local variables
-        elif re.search("\s*[a-z]*[^+\-*/]=", line):
+        elif re.search("\s*[a-z]*[^><+\-*/]=", line):
             var, val = line.split("=")
             var = var.strip()
+            val = val.strip()
             local_vars_dict[var] = len(local_vars_dict.keys())
-            local_vars_vals_dict[var] = int(val.strip())
+            print(line)
+            local_vars_vals_dict[var] = int(val.strip()) if val.isnumeric() else val
 
     with open("out.asm", "w") as out:
         
@@ -81,12 +83,6 @@ with open("file.py") as file:
         # SUBROUTINE IMPLEMENTATION
         in_a_loop, loop_indent, store_ans_in_mem = False, 4, False
         for line in lines:
-
-            # check if we need to store answer in memory
-            if re.search("MEM = \[]", line):
-                store_ans_in_mem = True
-                continue
-
             current_no_of_indents = re.search("\s*", line).end()
             # Check if there is a while loop
             if re.search("while", line):
@@ -96,11 +92,15 @@ with open("file.py") as file:
                 #print(loop_condition)
                 if ">" in loop_condition or "<" in loop_condition:
                     sign = ">" if ">" in loop_condition else "<"
+                    sign = sign+"=" if "=" in loop_condition else sign
                     var, val = loop_condition.split(sign)
                     out.write("\nAND R0, R0, 0\n")
                     var = var.strip()
                     val = val.strip()
+
+                    # Handle when condition is a number
                     if val.isnumeric():
+                        var_off = local_vars_dict[var] if var in local_vars_dict else args_dict[var]
 
                         # Make R0 equal to the condition value
                         temp_val = int(val)
@@ -113,18 +113,31 @@ with open("file.py") as file:
                         out.write("WHILE\n"\
                                   "NOT R1, R0\n"\
                                   f"ADD R1, R1, 1   ;; R1 = -{val}\n"\
-                                  f"LDR R2, R5, {local_vars_dict[var]}   ;; R2 = {var}\n"\
+                                  f"LDR R2, R5, {var_off}   ;; R2 = {var}\n"\
                                   f"ADD R1, R1, R2  ;; R1 = {var} - {val}\n")
-                        if sign == ">":
-                            if "=" in loop_condition:
-                                out.write("BRn END\n")
-                            else:
-                                out.write("BRnz END\n")
+
+                    # Handle when condition has a variable
+                    elif val.isalpha():
+                        var_off = local_vars_dict[var] if var in local_vars_dict else args_dict[var]
+                        val_off = local_vars_dict[val] if val in local_vars_dict else args_dict[val]
+                        # Start writing while loop initialization
+                        out.write("WHILE\n"\
+                                  f"LDR R0, R5, {var_off}  ;; R0 = {var}\n"\
+                                  f"LDR R1, R5, {val_off}  ;; R1 = {val}\n"\
+                                  "NOT R1, R1\n"\
+                                  f"ADD R1, R1, 1  ;; R1 = -{val}\n"\
+                                  f"ADD R0, R0, R1  ;; R0 = {var} - {val}\n")
+
+                    if ">" in sign:
+                        if "=" in loop_condition:
+                            out.write("BRn END\n")
                         else:
-                            if "=" in loop_condition:
-                                out.write("BRp END\n")
-                            else:
-                                out.write("BRzp END\n")
+                            out.write("BRnz END\n")
+                    else:
+                        if "=" in loop_condition:
+                            out.write("BRp END\n")
+                        else:
+                            out.write("BRzp END\n")
 
             # Write Core while loop content
             elif in_a_loop and current_no_of_indents == loop_indent+4:
@@ -132,8 +145,11 @@ with open("file.py") as file:
                 if "-=" in expression:
                     #print("HERE")
                     var, val = expression.split("-=")
+                    var = var.strip()
+                    val = val.strip()
+                    var_off = local_vars_dict[var] if var in local_vars_dict else args_dict[var]
                     if val.isnumeric():
-                        out.write(f"LDR R1, R5, {local_vars_dict[var]}  ;; R1 = {var}\n")
+                        out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
                         out.write(f"AND R2, R2, 0  ;; R2 = 0\n")
                         temp_val = int(val)
                         while (temp_val > 15):
@@ -143,11 +159,23 @@ with open("file.py") as file:
                         out.write("NOT R2, R2\n")
                         out.write(f"ADD R2, R2, 1  ;; R2 = -{val}\n")
                         out.write(f"ADD R1, R1, R2  ;; R1 = {var} - {val}\n")
-                        out.write(f"STR R1, R5, {local_vars_dict[var]}  ;; {var} = R1\n")
+                        out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
+                    elif val.isalpha():
+                        val_off = local_vars_dict[val] if val in local_vars_dict else args_dict[val]
+                        out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
+                        out.write(f"LDR R2, R5, {val_off}  ;; R2 = {val}\n")
+                        out.write("NOT R2, R2\n")
+                        out.write(f"ADD R2, R2, 1  ;; R2 = -{val}\n")
+                        out.write(f"ADD R1, R1, R2  ;; R1 = {var} - {val}\n")
+                        out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
+
+
+
                 if "+=" in expression:
                     var, val = expression.split("+=")
                     if val.isnumeric():
-                        out.write(f"LDR R1, R5, {local_vars_dict[var]}  ;; R1 = {var}\n")
+                        var_off = local_vars_dict[var] if var in local_vars_dict else args_dict[var]
+                        out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
                         out.write(f"AND R2, R2, 0  ;; R2 = 0\n")
                         temp_val = int(val)
                         while (temp_val > 15):
@@ -155,7 +183,13 @@ with open("file.py") as file:
                             temp_val -= 15
                         out.write(f"ADD R2, R2, {temp_val}  ;; R2 = {val}\n")
                         out.write(f"ADD R1, R1, R2  ;; R1 = {var} + {val}\n")
-                        out.write(f"STR R1, R5, {local_vars_dict[var]}  ;; {var} = R1\n")
+                        out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
+                    elif val.isalpha():
+                        val_off = local_vars_dict[val] if val in local_vars_dict else args_dict[val]
+                        out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
+                        out.write(f"LDR R2, R5, {val_off}  ;; R2 = {val}\n")
+                        out.write(f"ADD R1, R1, R2  ;; R1 = {var} + {val}\n")
+                        out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
             
             elif in_a_loop and current_no_of_indents == loop_indent:
                 in_a_loop = False
@@ -171,6 +205,9 @@ with open("file.py") as file:
                     if return_val in local_vars_dict:
                         out.write(f"LDR R0, R5, {local_vars_dict[return_val]}\n"\
                                   f"STR R0, R5, 3  ;; rv = {return_val}\n\n")
+                    elif return_val in args_dict:
+                        out.write(f"LDR R0, R5, {args_dict[return_val]}\n"\
+                                  f"STR R0, R5, 3  ;; rv = {return_val}\n\n")
             
             # TODO: Handle more while conditions >, <, >=, <=, ==, !=
             # TODO: Handle more while terminating conditions (i.e +=, *=, /=)
@@ -182,8 +219,12 @@ with open("file.py") as file:
         out.write("HALT\n\n")
         # Add .fills for vars with initial values
         for var in local_vars_dict.keys():
-            if local_vars_vals_dict[var]:
+            if type(local_vars_vals_dict[var]) == int:
                 out.write(f"{var.upper()} .fill {local_vars_vals_dict[var]}\n")
+            else:
+                var_name = local_vars_vals_dict[var]
+                val = local_vars_dict[var_name] if var_name in local_vars_dict else args_dict[var_name]
+                out.write(f"{var.upper()} .fill {val}\n")
         out.write(".end")
 
 
