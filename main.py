@@ -1,46 +1,65 @@
 import re
 
-STACK_BUILDUP_INIT = "ADD R6, R6, -4\nSTR R5, R6, 1\nSTR R7, R6, 2\nADD R5, R6, 0\nADD R6, R6, -5\n"
-STACK_BUILDUP_STORE_REG = "STR R0, R6, 0\nSTR R1, R6, 1\nSTR R2, R6, 2\nSTR R3, R6, 3\nSTR R4, R6, 4\n"
+STACK_BUILDUP_INIT = "ADD R6, R6, -4  ;; Make space for rv, old ra, old fp, lv1 \n" \
+                     "STR R5, R6, 1   ;; Store old fp\n"\
+                     "STR R7, R6, 2   ;; Store old ra\n"\
+                     "ADD R5, R6, 0   ;; Set SP to FP\n\n"\
+                     "ADD R6, R6, -5  ;; Make space to save registers\n"
 
-STACK_TEARDOWN_LOAD_REG = "LDR R0, R6, 0\nLDR R1, R6, 1\nLDR R2, R6, 2\nLDR R3, R6, 3\nLDR R4, R6, 4\nADD R6, R5, 0\n"
-STACK_TEARDOWN_FINAL = "LDR R5, R6, 1\nLDR R7, R6, 2\nADD R6, R6, 3\nRET\n"
+STACK_BUILDUP_STORE_REG = "STR R0, R6, 0\nSTR R1, R6, 1\nSTR R2, R6, 2\nSTR R3, R6, 3\nSTR R4, R6, 4   ;; Save R0,R1,R2,R3,R4 on stack\n"
+
+STACK_TEARDOWN_LOAD_REG = "LDR R0, R6, 0\nLDR R1, R6, 1\nLDR R2, R6, 2\nLDR R3, R6, 3\nLDR R4, R6, 4\nADD R6, R5, 0   ;; Load R0,R1,R2,R3,R4 from stack\n"
+STACK_TEARDOWN_FINAL = "LDR R5, R6, 1   ;; Load old fp\n" \
+                       "LDR R7, R6, 2   ;; Load old ra\n" \
+                       "ADD R6, R6, 3   ;; Pop lv1, old fp, old ra\n" \
+                       "RET\n"
 
 STACK_IMPL = ""
 
 stack_pointer = 0x6000
-args_dict = {}
-local_vars_dict = {}
+args_dict = {}  # Key: Argument name, Value: Offset from R5 (local variable 1)
+local_vars_dict = {} # Key: Local variable 1, Value: (Offset, Local value)
 reg_dict = {}
+
+FUNC_NAME = None
+NO_OF_ARGS = 0
 
 with open("file.py") as file:
     lines = file.readlines()
+
+    # Parse function name, no.of arguments and no.of local variables used
     for line in lines:
+        # Get function name
+        if re.search("def \s*", line):
+            idx = re.search("def \s*", line).end()
+            end_idx = re.search("def [a-x]*", line).end()
+            FUNC_NAME = line[idx:end_idx].strip().upper()
+
         # Get no.of arguments
-        if re.search("def [a-z]*\(", line):
-            idx = re.search("def [a-z]*\(", line).end()
-            line = line[idx:]
+        if re.search("def\s*[a-z]*\([a-z]", line):
+            print("HERE")
+            start_idx = re.search("def [a-z]*\(", line).end()
+            line = line[start_idx:]
             line = line.split(")")[0].split(',')
-            for idx, arg in enumerate(line):
-                args_dict[arg.strip()] = 4+idx
-            #print(args_dict)
-            no_of_args = len(line)
+            if not len(line) == 0:
+                for idx, arg in enumerate(line):
+                    args_dict[arg.strip()] = 4+idx
+                NO_OF_ARGS = len(line)
         # Find and index local variables
         elif re.search("\s*[a-z]*[^+\-*/]=", line):
-            var, _ = line.split("=")
-            var = var.lstrip()
+            var, val = line.split("=")
+            var = var.strip()
             local_vars_dict[var] = len(local_vars_dict.keys())
-
-        #print(local_vars_dict.keys(), no_of_args)
 
     with open("out.asm", "w") as out:
         ## STACK BUILDUP
-        out.write(".orig x3000\nMULTIPLY\n")
+        out.write(f".orig x3000\n{FUNC_NAME}\n")
         out.write(";;STACK BUILDUP\n")
         out.write(STACK_BUILDUP_INIT)
         for var in range(len(local_vars_dict.keys()) - 1):
             out.write("ADD R6, R6, -1\n")
         out.write(STACK_BUILDUP_STORE_REG)
+        out.write("\n;;Core functionality\n")
 
         ## Clear all local variable spots
         out.write("AND R0, R0, 0\n")
@@ -76,12 +95,15 @@ with open("file.py") as file:
                 var = line.split("n ")[1].strip()
                 if var in local_vars_dict:
                     STACK_IMPL += f"LDR R0, R5, {local_vars_dict[var]}\nSTR R0, R5, 3\n"
+        
         out.write(STACK_IMPL)
-        #print(STACK_IMPL)
+        out.write("\n")
 
         ## STACK TEARDOWN
+        out.write(";;STACK TEARDOWN\n")
         out.write(STACK_TEARDOWN_LOAD_REG)
         out.write(STACK_TEARDOWN_FINAL)
+        out.write("HALT\n")
         out.write(".end")
 
     # print(lines)
