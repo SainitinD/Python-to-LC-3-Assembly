@@ -29,6 +29,7 @@ with open("file.py") as file:
 
     # Parse function name, no.of arguments and no.of local variables used
     for line in lines:
+
         # Get function name
         if re.search("def \s*", line):
             idx = re.search("def \s*", line).end()
