@@ -173,8 +173,10 @@ with open("file.py") as file:
 
                 if "+=" in expression:
                     var, val = expression.split("+=")
+                    var = var.strip()
+                    val = val.strip()
+                    var_off = local_vars_dict[var] if var in local_vars_dict else args_dict[var]
                     if val.isnumeric():
-                        var_off = local_vars_dict[var] if var in local_vars_dict else args_dict[var]
                         out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
                         out.write(f"AND R2, R2, 0  ;; R2 = 0\n")
                         temp_val = int(val)
@@ -184,7 +186,7 @@ with open("file.py") as file:
                         out.write(f"ADD R2, R2, {temp_val}  ;; R2 = {val}\n")
                         out.write(f"ADD R1, R1, R2  ;; R1 = {var} + {val}\n")
                         out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
-                    elif val.isalpha():
+                    elif var.isalpha():
                         val_off = local_vars_dict[val] if val in local_vars_dict else args_dict[val]
                         out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
                         out.write(f"LDR R2, R5, {val_off}  ;; R2 = {val}\n")
