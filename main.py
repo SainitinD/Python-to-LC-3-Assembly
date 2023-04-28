@@ -63,7 +63,7 @@ with open("file.py") as file:
         out.write(";;STACK BUILDUP\n")
         out.write(STACK_BUILDUP_INIT)
         # Make space for local vars on stack
-        for var in range(len(local_vars_dict.keys()) - 1): out.write("ADD R6, R6, -1\n")  
+        for var in range(len(local_vars_dict.keys()) - 1): out.write(f"ADD R6, R6, -1  ;; Make space for local variable\n")
         out.write(STACK_BUILDUP_STORE_REG)
         out.write("\n;;Core functionality\n")
 
@@ -79,8 +79,13 @@ with open("file.py") as file:
                 out.write(f"STR R0, R5, -{local_vars_dict[var]}\n")
 
         # SUBROUTINE IMPLEMENTATION
-        in_a_loop, loop_indent = False, 4
+        in_a_loop, loop_indent, store_ans_in_mem = False, 4, False
         for line in lines:
+
+            # check if we need to store answer in memory
+            if re.search("MEM = \[]", line):
+                store_ans_in_mem = True
+                continue
 
             current_no_of_indents = re.search("\s*", line).end()
             # Check if there is a while loop
@@ -89,9 +94,9 @@ with open("file.py") as file:
                 start_idx = re.search("while\s*\(", line).end()
                 loop_condition = line[start_idx:].split(")")[0]
                 #print(loop_condition)
-                if ">" in loop_condition:
-
-                    var, val = loop_condition.split(">")
+                if ">" in loop_condition or "<" in loop_condition:
+                    sign = ">" if ">" in loop_condition else "<"
+                    var, val = loop_condition.split(sign)
                     out.write("\nAND R0, R0, 0\n")
                     var = var.strip()
                     val = val.strip()
@@ -109,13 +114,23 @@ with open("file.py") as file:
                                   "NOT R1, R0\n"\
                                   f"ADD R1, R1, 1   ;; R1 = -{val}\n"\
                                   f"LDR R2, R5, {local_vars_dict[var]}   ;; R2 = {var}\n"\
-                                  f"ADD R1, R1, R2  ;; R1 = {var} - {val}\n"\
-                                  "BRnz END\n\n")
-   
+                                  f"ADD R1, R1, R2  ;; R1 = {var} - {val}\n")
+                        if sign == ">":
+                            if "=" in loop_condition:
+                                out.write("BRn END\n")
+                            else:
+                                out.write("BRnz END\n")
+                        else:
+                            if "=" in loop_condition:
+                                out.write("BRp END\n")
+                            else:
+                                out.write("BRzp END\n")
+
             # Write Core while loop content
             elif in_a_loop and current_no_of_indents == loop_indent+4:
                 expression = line.strip()
                 if "-=" in expression:
+                    #print("HERE")
                     var, val = expression.split("-=")
                     if val.isnumeric():
                         out.write(f"LDR R1, R5, {local_vars_dict[var]}  ;; R1 = {var}\n")
@@ -129,10 +144,22 @@ with open("file.py") as file:
                         out.write(f"ADD R2, R2, 1  ;; R2 = -{val}\n")
                         out.write(f"ADD R1, R1, R2  ;; R1 = {var} - {val}\n")
                         out.write(f"STR R1, R5, {local_vars_dict[var]}  ;; {var} = R1\n")
+                if "+=" in expression:
+                    var, val = expression.split("+=")
+                    if val.isnumeric():
+                        out.write(f"LDR R1, R5, {local_vars_dict[var]}  ;; R1 = {var}\n")
+                        out.write(f"AND R2, R2, 0  ;; R2 = 0\n")
+                        temp_val = int(val)
+                        while (temp_val > 15):
+                            out.write(f"ADD R2, R2, {15}\n")
+                            temp_val -= 15
+                        out.write(f"ADD R2, R2, {temp_val}  ;; R2 = {val}\n")
+                        out.write(f"ADD R1, R1, R2  ;; R1 = {var} + {val}\n")
+                        out.write(f"STR R1, R5, {local_vars_dict[var]}  ;; {var} = R1\n")
             
             elif in_a_loop and current_no_of_indents == loop_indent:
                 in_a_loop = False
-                out.write("BR WHILE\n\n")
+                out.write("BR WHILE  ;; End of Loop\n\n")
                 out.write("END\n")
 
             # Handle returning the function
