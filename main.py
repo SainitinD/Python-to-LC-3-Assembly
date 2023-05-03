@@ -6,9 +6,14 @@ STACK_BUILDUP_INIT = "ADD R6, R6, -4  ;; Make space for rv, old ra, old fp, lv1 
                      "ADD R5, R6, 0   ;; Set SP to FP\n\n"\
                      "ADD R6, R6, -5  ;; Make space to save registers\n"
 
-STACK_BUILDUP_STORE_REG = "STR R0, R6, 0\nSTR R1, R6, 1\nSTR R2, R6, 2\nSTR R3, R6, 3\nSTR R4, R6, 4   ;; Save R0,R1,R2,R3,R4 on stack\n"
+STACK_BUILDUP_STORE_REG = "STR R0, R6, 0\n" \
+                          "STR R1, R6, 1\n" \
+                          "STR R2, R6, 2\n" \
+                          "STR R3, R6, 3\n" \
+                          "STR R4, R6, 4   ;; Save R0,R1,R2,R3,R4 on stack\n"
 
 STACK_TEARDOWN_LOAD_REG = "LDR R0, R6, 0\nLDR R1, R6, 1\nLDR R2, R6, 2\nLDR R3, R6, 3\nLDR R4, R6, 4\nADD R6, R5, 0   ;; Load R0,R1,R2,R3,R4 from stack\n\n"
+
 STACK_TEARDOWN_FINAL = "LDR R5, R6, 1   ;; Load old fp\n" \
                        "LDR R7, R6, 2   ;; Load old ra\n" \
                        "ADD R6, R6, 3   ;; Pop lv1, old fp, old ra\n" \
@@ -37,7 +42,6 @@ with open("file.py") as file:
             end_idx = re.search("def [a-x]*", line).end()
             FUNC_NAME = line[idx:end_idx].strip().upper()
 
-       # print(line)
         # Get no.of arguments
         if re.search("def\s*[a-z]*\([a-z]", line):
             start_idx = re.search("def [a-z]*\(", line).end()
@@ -53,14 +57,19 @@ with open("file.py") as file:
             var, val = line.split("=")
             var = var.strip()
             val = val.strip()
-            local_vars_dict[var] = len(local_vars_dict.keys())
-            print(line)
-            local_vars_vals_dict[var] = int(val.strip()) if val.isnumeric() else val
+            if var not in local_vars_dict:
+                local_vars_dict[var] = len(local_vars_dict.keys())
 
+            # Account for edge case when var equals a function call
+            if "(" not in val:
+                local_vars_vals_dict[var] = int(val.strip()) if val.isnumeric() else val
+            else:
+                local_vars_vals_dict[var] = local_vars_vals_dict.get(var, 0)
+
+    # Write the assembly function
     with open("out.asm", "w") as out:
         
         # STACK BUILDUP
-
         out.write(f".orig x3000\n{FUNC_NAME}\n")
         out.write(";;STACK BUILDUP\n")
         out.write(STACK_BUILDUP_INIT)
@@ -70,15 +79,16 @@ with open("file.py") as file:
         out.write("\n;;Core functionality\n")
 
         # Clear all local variable spots
-        out.write("AND R0, R0, 0\n")
+       # out.write("AND R0, R0, 0\n")
         for var in local_vars_dict.keys():
            # print(var)
             if local_vars_vals_dict[var]:
                 out.write(f"LD R0, {var.upper()}\n")
-                out.write(f"STR R0, R5, -{local_vars_dict[var]}\n")
-                out.write("AND R0, R0, 0\n")
+                out.write(f"STR R0, R5, -{local_vars_dict[var]}  ;; storing local var\n")
+                #out.write("AND R0, R0, 0\n")
             else:
-                out.write(f"STR R0, R5, -{local_vars_dict[var]}\n")
+                out.write("AND R0, R0, 0\n")
+                out.write(f"STR R0, R5, -{local_vars_dict[var]}  ;; clearing local var\n")
 
         # SUBROUTINE IMPLEMENTATION
         in_a_loop, loop_indent, store_ans_in_mem = False, 4, False
@@ -121,10 +131,17 @@ with open("file.py") as file:
                         var_off = local_vars_dict[var] if var in local_vars_dict else args_dict[var]
                         val_off = local_vars_dict[val] if val in local_vars_dict else args_dict[val]
                         # Start writing while loop initialization
-                        out.write("WHILE\n"\
-                                  f"LDR R0, R5, {var_off}  ;; R0 = {var}\n"\
-                                  f"LDR R1, R5, {val_off}  ;; R1 = {val}\n"\
-                                  "NOT R1, R1\n"\
+                        out.write("WHILE\n")
+                        if var in local_vars_dict:
+                            out.write(f"LDR R0, R5, -{var_off}  ;; R0 = {var}\n")
+                        else:
+                            out.write(f"LDR R0, R5, {var_off}  ;; R0 = {var}\n")
+                        if val in local_vars_dict:
+                            out.write(f"LDR R1, R5, -{val_off}  ;; R1 = {val}\n")
+                        else:
+                            out.write(f"LDR R1, R5, {val_off}  ;; R1 = {val}\n")
+
+                        out.write("NOT R1, R1\n"\
                                   f"ADD R1, R1, 1  ;; R1 = -{val}\n"\
                                   f"ADD R0, R0, R1  ;; R0 = {var} - {val}\n")
 
@@ -149,7 +166,10 @@ with open("file.py") as file:
                     val = val.strip()
                     var_off = local_vars_dict[var] if var in local_vars_dict else args_dict[var]
                     if val.isnumeric():
-                        out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
+                        if var in local_vars_dict:
+                            out.write(f"LDR R1, R5, -{var_off}  ;; R1 = {var}\n")
+                        else:
+                            out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
                         out.write(f"AND R2, R2, 0  ;; R2 = 0\n")
                         temp_val = int(val)
                         while (temp_val > 15):
@@ -159,25 +179,39 @@ with open("file.py") as file:
                         out.write("NOT R2, R2\n")
                         out.write(f"ADD R2, R2, 1  ;; R2 = -{val}\n")
                         out.write(f"ADD R1, R1, R2  ;; R1 = {var} - {val}\n")
-                        out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
+                        if var in local_vars_dict:
+                            out.write(f"STR R1, R5, -{var_off}  ;; {var} = R1\n")
+                        else:
+                            # THIS PROBABLY SHOUDLN'T BE ACCESSED. BUT IM ADDING IT JUST IN CASE
+                            out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
                     elif val.isalpha():
                         val_off = local_vars_dict[val] if val in local_vars_dict else args_dict[val]
-                        out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
-                        out.write(f"LDR R2, R5, {val_off}  ;; R2 = {val}\n")
+                        out.write(f"LDR R1, R5, -{var_off}  ;; R1 = {var}\n")
+                        if val in local_vars_dict:
+                            out.write(f"LDR R2, R5, -{val_off}  ;; R2 = {val}\n")
+                        else:
+                            out.write(f"LDR R2, R5, {val_off}  ;; R2 = {val}\n")
                         out.write("NOT R2, R2\n")
                         out.write(f"ADD R2, R2, 1  ;; R2 = -{val}\n")
                         out.write(f"ADD R1, R1, R2  ;; R1 = {var} - {val}\n")
-                        out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
+                        if var in local_vars_dict:
+                            out.write(f"STR R1, R5, -{var_off}  ;; {var} = R1\n")
+                        else:
+                            # THIS PROBABLY SHOUDLN'T BE ACCESSED. BUT IM ADDING IT JUST IN CASE
+                            out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
 
 
 
-                if "+=" in expression:
+                elif "+=" in expression:
                     var, val = expression.split("+=")
                     var = var.strip()
                     val = val.strip()
                     var_off = local_vars_dict[var] if var in local_vars_dict else args_dict[var]
                     if val.isnumeric():
-                        out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
+                        if var in local_vars_dict:
+                            out.write(f"LDR R1, R5, -{var_off}  ;; R1 = {var}\n")
+                        else:
+                            out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
                         out.write(f"AND R2, R2, 0  ;; R2 = 0\n")
                         temp_val = int(val)
                         while (temp_val > 15):
@@ -185,13 +219,73 @@ with open("file.py") as file:
                             temp_val -= 15
                         out.write(f"ADD R2, R2, {temp_val}  ;; R2 = {val}\n")
                         out.write(f"ADD R1, R1, R2  ;; R1 = {var} + {val}\n")
-                        out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
-                    elif var.isalpha():
+                        if var in local_vars_dict:
+                            out.write(f"STR R1, R5, -{var_off}  ;; {var} = R1\n")
+                        else:
+                            # THIS PROBABLY SHOUDLN'T BE ACCESSED. BUT IM ADDING IT JUST IN CASE
+                            out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
+                    elif val.isalpha():
                         val_off = local_vars_dict[val] if val in local_vars_dict else args_dict[val]
-                        out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
-                        out.write(f"LDR R2, R5, {val_off}  ;; R2 = {val}\n")
+                        if var in local_vars_dict:
+                            out.write(f"LDR R1, R5, -{var_off}  ;; R1 = {var}\n")
+                        else:
+                            out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
+                        if val in local_vars_dict:
+                            out.write(f"LDR R2, R5, -{val_off}  ;; R2 = {val}\n")
+                        else:
+                            out.write(f"LDR R2, R5, {val_off}  ;; R2 = {val}\n")
                         out.write(f"ADD R1, R1, R2  ;; R1 = {var} + {val}\n")
-                        out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
+                        if var in local_vars_dict:
+                            out.write(f"STR R1, R5, -{var_off}  ;; {var} = R1\n")
+                        else:
+                            # THIS PROBABLY SHOUDLN'T BE ACCESSED. BUT IM ADDING IT JUST IN CASE
+                            out.write(f"STR R1, R5, {var_off}  ;; {var} = R1\n")
+
+                elif "=" in expression:
+                    var, val = expression.split("=")
+                    var = var.strip()
+                    val = val.strip()
+                    var_off = local_vars_dict[var] if var in local_vars_dict else args_dict[var]
+                    if val.isnumeric():
+                        if var in local_vars_dict:
+                            out.write(f"LDR R1, R5, -{var_off}  ;; R1 = {var}\n")
+                        else:
+                            out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
+                        out.write(f"AND R2, R2, 0  ;; R2 = 0\n")
+                        temp_val = int(val)
+                        while (temp_val > 15):
+                            out.write(f"ADD R2, R2, {15}\n")
+                            temp_val -= 15
+                        out.write(f"ADD R2, R2, {temp_val}  ;; R2 = {val}\n")
+                        out.write(f"STR R2, R5, {var_off}  ;; {var} = R2\n")
+                    elif "(" in val:
+                        callee_func_name, args = val[:-1].split("(")
+                        callee_func_name = callee_func_name.upper()
+                        args = args.split(",")
+                        out.write(f"ADD R6, R6, -2  ;; Make space for {callee_func_name} args\n")
+                        for idx, arg in enumerate(args):
+                            arg = arg.strip()
+                            arg_off = local_vars_dict[arg] if arg in local_vars_dict else args_dict[arg]
+                            out.write(f"LDR R2, R5, -{arg_off}  ;; R2 = {arg}\n"
+                                      f"STR R2, R6, {idx}  ;; Store {arg} on stack\n")
+                        out.write(f"JSR {callee_func_name}\n"
+                                  f"LDR R2, R6, 0  ;; R2 = {val}\n"
+                                  f"ADD R6, R6, {len(args) + 1}  ;; pop rv, callee args\n")
+                        if var in local_vars_dict:
+                            out.write(f"STR R2, R5, -{var_off}  ;; {var} = {val}\n")
+                        else:
+                            out.write(f"STR R2, R5, {var_off}  ;; {var} = {val}\n")
+                    elif val.isalpha():
+                        val_off = local_vars_dict[val] if val in local_vars_dict else args_dict[val]
+                        if var in local_vars_dict:
+                            out.write(f"LDR R1, R5, -{var_off}  ;; R1 = {var}\n")
+                        else:
+                            out.write(f"LDR R1, R5, {var_off}  ;; R1 = {var}\n")
+                        if val in local_vars_dict:
+                            out.write(f"LDR R2, R5, -{val_off}  ;; R2 = {val}\n")
+                        else:
+                            out.write(f"LDR R2, R5, {val_off}  ;; R2 = {val}\n")
+                        out.write(f"STR R2, R5, {var_off}  ;; {var} = R2\n")
             
             elif in_a_loop and current_no_of_indents == loop_indent:
                 in_a_loop = False
@@ -223,7 +317,7 @@ with open("file.py") as file:
         for var in local_vars_dict.keys():
             if type(local_vars_vals_dict[var]) == int:
                 out.write(f"{var.upper()} .fill {local_vars_vals_dict[var]}\n")
-            else:
+            elif "(" not in val:
                 var_name = local_vars_vals_dict[var]
                 val = local_vars_dict[var_name] if var_name in local_vars_dict else args_dict[var_name]
                 out.write(f"{var.upper()} .fill {val}\n")
